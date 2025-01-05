@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "recommenders"
+version = "0.1.0"
+description = ""
+authors = ["caglanakpinar <cakpinar23@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+jupyterlab = "^4.3.4"
+tensorflow = "^2.18.0"
+pandas = "^2.2.3"
+dl-ml-ops = {git = "https://github.com/caglanakpinar/dl_ml_ops.git"}
+plotnine = "^0.14.4"
+plotly = "^5.24.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
