@@ -1,0 +1,16 @@
+data_read_type: csv # or parquet
+dataset_file_names:
+  product_data: products
+  users_data: users
+  transaction_data: orders
+  train_data: order_products__train
+
+fields:
+  user_field_name: user_id
+  product_field_name: product_id
+  transaction_field_name: order_id
+
+name: transformer_based_reco
+
+
+epochs: 30
