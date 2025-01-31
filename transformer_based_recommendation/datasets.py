@@ -1,6 +1,9 @@
 from pathlib import Path
 import pandas as pd
+from statistics import mode
 from pandas.core.interchange.dataframe_protocol import DataFrame
+
+from recommender import Payload
 
 
 class Data:
@@ -17,8 +20,6 @@ class ReadData(Data):
             data_format: str,
 
     ):
-
-
         self.data_path = Path(data_path)
         self.dataset_file_names = dataset_file_names
         self.data_format = data_format
@@ -81,6 +82,10 @@ class BasePreProcess:
     product_user_cnt: pd.DataFrame | dict[str, float] = {}
     user_transaction_cnt: pd.DataFrame | dict[str, float] = {}
     user_product_cnt: pd.DataFrame | dict[str, float] = {}
+    null_values: [dict | float] = {}
+    mapping: list[
+        tuple[str, product_transaction_cnt | product_user_cnt | user_transaction_cnt | user_product_cnt]
+    ] = []
 
     @staticmethod
     def min_max_norm(data: pd.Series) -> float:
@@ -183,8 +188,17 @@ class PreProcess(ReadData, BasePreProcess):
         if fields.get('relevance') is None:
             self.create_rankings()
 
+        self.mapping = [
+            (self.product_field_name, self.product_transaction_cnt),
+            (self.product_field_name, self.product_user_cnt),
+            (self.user_field_name, self.user_transaction_cnt),
+            (self.user_field_name, self.user_product_cnt)
+        ]
+
     def update_categorical_features(self):
         for cat in self.categorical_features:
+            if cat in self.transaction_data.columns:
+                self.train_data[cat] = self.train_data[cat].apply(self.convert_to_str)
             if cat in self.transaction_data.columns:
                 self.transaction_data[cat] = self.transaction_data[cat].apply(self.convert_to_str)
             if cat in self.user_data.columns:
@@ -289,3 +303,62 @@ class PreProcess(ReadData, BasePreProcess):
             self.get_ranking
         )
 
+
+class FeatureEng(PreProcess):
+    def __init__(
+            self,
+            data_path: str | Path,
+            dataset_file_names: dict[str, str], data_format: str,
+            fields: dict[str, str],
+            categorical_features: list[str],
+            numeric_features: list[str]
+    ):
+        super().__init__(
+            data_path,
+            dataset_file_names,
+            data_format,
+            fields,
+            categorical_features
+        )
+        self.numeric_features = numeric_features
+        self.create_offline_features()
+        self.get_null_values()
+
+    def update_train_data(self, features):
+        for f in features:
+            if f not in self.train_data.columns:
+                _merge_data = self.transaction_data
+                _merge_column = self.transaction_field_name
+                if f in self.product_data.columns:
+                    _merge_data = self.product_data
+                    _merge_column = self.product_field_name
+                if f in self.user_data.columns:
+                    _merge_data = self.user_data
+                    _merge_column = self.user_field_name
+                self.train_data = self.train_data.merge(
+                    _merge_data[[_merge_column, f]],
+                    on=_merge_column,
+                    how='left'
+                )
+
+    def get_generic_features(self):
+        for key, mapping in self.mapping:
+            for f in mapping.keys():
+                self.train_data[f] = self.train_data[key].apply(
+                    mapping[f]
+                )
+
+    def create_offline_features(self):
+        self.update_train_data(self.categorical_features)
+        self.update_train_data(self.numeric_features)
+
+        # this is the features that are created by the platform automatically
+        self.get_generic_features()
+
+    def create_online_features(self, payload: Payload):
+        pass
+
+    def get_null_values(self):
+        for key, mapping in self.mapping:
+            for f in mapping.keys():
+                self.null_values[f] = mode(self.train_data[self.train_data[f] == self.train_data[f]][f])
