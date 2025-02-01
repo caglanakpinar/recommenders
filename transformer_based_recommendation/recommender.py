@@ -50,7 +50,7 @@ class Prediction:
             return self.user_field_name, payload.user
         return None, None
 
-    def online_numeric_features(self, payload: Payload) -> list[dict[str, float]]:
+    def get_online_features(self, payload: Payload) -> list[dict[str, float]]:
         inputs = []
         for query_product in payload.candidates_p:
             payload.query_product = query_product
@@ -78,7 +78,9 @@ class Prediction:
 
 
     def predict_relevance_scores(self, payload: Payload):
-        pass
+        return self.model.predict(
+            self.get_online_features(payload)
+        )
 
 
 
