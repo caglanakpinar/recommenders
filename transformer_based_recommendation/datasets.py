@@ -83,9 +83,21 @@ class BasePreProcess:
     user_transaction_cnt: pd.DataFrame | dict[str, float] = {}
     user_product_cnt: pd.DataFrame | dict[str, float] = {}
     null_values: [dict | float] = {}
-    mapping: list[
-        tuple[str, product_transaction_cnt | product_user_cnt | user_transaction_cnt | user_product_cnt]
-    ] = []
+    numerical_mapping: dict[
+        str,
+        tuple[
+            str | tuple[str, str],
+            product_transaction_cnt | product_user_cnt | user_transaction_cnt | user_product_cnt
+        ]
+
+    ] = {}
+    categorical_mappings: dict[
+        str,
+        tuple[
+            str | tuple[str, str],
+            dict
+        ]
+    ] = {}
 
     @staticmethod
     def min_max_norm(data: pd.Series) -> float:
@@ -115,7 +127,6 @@ class BasePreProcess:
             return 5
 
 
-
 class PreProcess(ReadData, BasePreProcess):
     def __init__(
             self,
@@ -123,7 +134,8 @@ class PreProcess(ReadData, BasePreProcess):
             dataset_file_names: dict[str, str],
             data_format: str,
             fields: dict[str, str],
-            categorical_features: list[str]
+            categorical_features: list[str],
+            numerical_features: list[str]
     ):
         super().__init__(
             data_path,
@@ -135,6 +147,7 @@ class PreProcess(ReadData, BasePreProcess):
         self.transaction_field_name = fields['transaction_field_name']
         self.relevance_field = fields.get('relevance', 'relevance')
         self.categorical_features = categorical_features
+        self.numerical_features = numerical_features
 
         if  self.user_field_name not in list(self.user_data.columns):
             raise RuntimeError(
@@ -188,12 +201,8 @@ class PreProcess(ReadData, BasePreProcess):
         if fields.get('relevance') is None:
             self.create_rankings()
 
-        self.mapping = [
-            (self.product_field_name, self.product_transaction_cnt),
-            (self.product_field_name, self.product_user_cnt),
-            (self.user_field_name, self.user_transaction_cnt),
-            (self.user_field_name, self.user_product_cnt)
-        ]
+        self.get_categorical_mappings()
+        self.get_numerical_mappings()
 
     def update_categorical_features(self):
         for cat in self.categorical_features:
@@ -303,6 +312,79 @@ class PreProcess(ReadData, BasePreProcess):
             self.get_ranking
         )
 
+    def get_mapping_from_datasets(self, f) -> tuple[str | tuple, dict[str | tuple, str | float]]:
+        _key = [self.product_field_name, self.user_field_name]
+        _data = self.transaction_data
+        if f in self.user_data.columns:
+            _key = self.user_field_name
+            _data = self.user_data
+        if f in self.product_data.solumns:
+            _key = self.product_field_name
+            _data = self.product_data
+        return (
+            _key,
+            (
+                _data
+                .groupby(_key)
+                [f]
+                .agg('first')
+                .reset_index()
+                .set_index(_key)
+            )
+        )
+
+    def get_categorical_mappings(self):
+        """mappings for online/offline feature creation - categorical
+        1. finding which dataset has the feature column.
+        check product_field_name and user_field_name
+            mapping key:
+                if dataset hast both product_field_name & user_field_name -> (product_field_name, user_field_name)
+                if data has product_field_name -> product_field_name
+                if data has user_field_name -> user_field_name
+        """
+        for f in self.categorical_features:
+            if f != self.product_field_name and f != self.user_field_name:
+                self.categorical_mappings[f] = self.get_mapping_from_datasets(f)
+
+    def get_numerical_mappings(self):
+        """mappings for online/offline feature creation -numerical
+        there are generic numerical features coming from
+            - product_transaction_cnt
+            - product_user_cnt
+            - user_transaction_cnt
+            - user_product_cnt
+        there are also coming from configs/params.yaml
+        how to find features
+
+        1. finding which dataset has the feature column.
+        check product_field_name and user_field_name
+            mapping key:
+                if dataset hast both product_field_name & user_field_name -> (product_field_name, user_field_name)
+                if data has product_field_name -> product_field_name
+                if data has user_field_name -> user_field_name
+        """
+        for _key, _mapping in [
+            (self.product_field_name, self.product_transaction_cnt),
+            (self.product_field_name, self.product_user_cnt),
+            (self.user_field_name, self.user_transaction_cnt),
+            (self.user_field_name, self.user_product_cnt)
+        ]:
+            for f, _value in _mapping.items():
+                self.numerical_mapping[f] = (
+                    _key,
+                    (
+                        _value
+                        .groupby(_key)
+                        [f]
+                        .agg('first')
+                        .reset_index()
+                        .set_index(_key)
+                    )
+                )
+
+        for f, _value in self.numerical_features:
+            if f not in self.numerical_mapping:
+                self.numerical_mapping[f] = self.get_mapping_from_datasets(f)
 
 class FeatureEng(PreProcess):
     def __init__(
@@ -318,47 +400,48 @@ class FeatureEng(PreProcess):
             dataset_file_names,
             data_format,
             fields,
-            categorical_features
+            categorical_features,
+            numeric_features
         )
         self.numeric_features = numeric_features
-        self.create_offline_features()
+        self.create_offline_features_and_mappings()
         self.get_null_values()
 
-    def update_train_data(self, features):
-        for f in features:
-            if f not in self.train_data.columns:
-                _merge_data = self.transaction_data
-                _merge_column = self.transaction_field_name
-                if f in self.product_data.columns:
-                    _merge_data = self.product_data
-                    _merge_column = self.product_field_name
-                if f in self.user_data.columns:
-                    _merge_data = self.user_data
-                    _merge_column = self.user_field_name
-                self.train_data = self.train_data.merge(
-                    _merge_data[[_merge_column, f]],
-                    on=_merge_column,
-                    how='left'
-                )
-
-    def get_generic_features(self):
-        for key, mapping in self.mapping:
-            for f in mapping.keys():
+    def create_offline_features_and_mappings(self):
+        """training data set creation
+        """
+        for f, mappings in self.numerical_mapping.items():
+            for key, mapping in mappings:
                 self.train_data[f] = self.train_data[key].apply(
                     mapping[f]
                 )
 
-    def create_offline_features(self):
-        self.update_train_data(self.categorical_features)
-        self.update_train_data(self.numeric_features)
+        for f, mappings in self.categorical_mappings.items():
+            for key, mapping in mappings:
+                self.train_data[f] = self.train_data[key].apply(
+                    mapping[f]
+                )
 
-        # this is the features that are created by the platform automatically
-        self.get_generic_features()
-
-    def create_online_features(self, payload: Payload):
-        pass
+    def create_online_features_and_mappings(self, payload: Payload) -> dict[str, float | str]:
+        features_mappings = {}
+        for mappings in [self.numerical_mapping, self.categorical_mappings]:
+            for f, key_feature_map in mappings.items():
+                for key, mapping in key_feature_map:
+                    features_mappings[f] = (
+                        mapping[payload.query_product if key == self.product_field_name else payload.user]
+                    )
+        return features_mappings
 
     def get_null_values(self):
-        for key, mapping in self.mapping:
+        """this is null value implementation for numerical features
+        when numerical features are not available on numeric_mappings, collect from null_values
+        :return:
+        """
+        for key, mapping in self.numerical_mapping:
             for f in mapping.keys():
                 self.null_values[f] = mode(self.train_data[self.train_data[f] == self.train_data[f]][f])
+
+
+
+
+
