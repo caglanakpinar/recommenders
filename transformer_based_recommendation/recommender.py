@@ -1,16 +1,9 @@
 import keras
 from mlp import Params
 
-
-from models import Encoder
+from transformer_based_recommendation.models import Encoder
 from transformer_based_recommendation.datasets import FeatureEng
-
-
-class Payload:
-    candidates_p: list[str]
-    query_product: str
-    user: str
-    ts: str
+from transformer_based_recommendation.utils import Payload
 
 
 class Prediction:
