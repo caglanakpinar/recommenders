@@ -1,16 +1,15 @@
 from pathlib import Path
 import pandas as pd
 from statistics import mode
-from pandas.core.interchange.dataframe_protocol import DataFrame
 
-from recommender import Payload
+from transformer_based_recommendation.utils import Payload
 
 
 class Data:
     product_data: pd.DataFrame = pd.DataFrame()
     user_data: pd.DataFrame = pd.DataFrame()
     transaction_data: pd.DataFrame = pd.DataFrame()
-    train_data: pd.DataFrame = DataFrame()
+    train_data: pd.DataFrame = pd.DataFrame()
 
 
 class ReadData(Data):
@@ -67,7 +66,7 @@ class ReadData(Data):
             )
 
     @property
-    def reader(self) -> pd.read_csv | pd.read_parquet:
+    def reader(self) -> callable:
         """only supports .csv and .parquet data format
         :return: pandas csv or parquet reader methods
         """
