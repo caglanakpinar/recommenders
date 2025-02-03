@@ -64,7 +64,7 @@ class Prediction:
                     if _key is not None:
                         features[f] = self.query_lookups(
                             lookup_name=_key,
-                            lookup_value=value
+                            lookup_value=self.features.convert_to_str(value)
                         )
                     else:
                         features[f] = self.query_lookups(

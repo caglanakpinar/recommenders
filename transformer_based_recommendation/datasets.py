@@ -111,6 +111,10 @@ class BasePreProcess:
 
     @staticmethod
     def convert_to_str(x) -> str:
+        if 'b' == str(x).split("_")[0]:
+            return x
+        if type(x) == str:
+            return 'b_' + x
         return 'b_' + str(int(x))
 
     @staticmethod
@@ -427,9 +431,18 @@ class FeatureEng(PreProcess):
         for mappings in [self.numerical_mapping, self.categorical_mappings]:
             for f, key_feature_map in mappings.items():
                 for key, mapping in key_feature_map:
-                    features_mappings[f] = (
-                        mapping[payload.query_product if key == self.product_field_name else payload.user]
+                    mapping_key = self.convert_to_str(
+                        payload.query_product
+                        if key == self.product_field_name
+                        else payload.user
                     )
+                    features_mappings[f] = (
+                        mapping[
+                            mapping_key
+                        ]
+                    )
+                    if f in self.categorical_features:
+                        features_mappings[f] = features_mappings[f]
         return features_mappings
 
     def get_null_values(self):
