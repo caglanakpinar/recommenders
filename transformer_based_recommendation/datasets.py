@@ -40,6 +40,17 @@ class Data:
 
 
 class ReadData(Data):
+    """reading and checking for mandatory columns
+
+    product_data
+        product ID column
+    user_data
+        user ID column
+    train_data
+        transaction Id column
+
+    this framework only supports csv and parquet files with structured format.
+    """
     def __init__(
             self, data_path: str | Path,
             dataset_file_names: dict[str, str],
@@ -104,10 +115,28 @@ class ReadData(Data):
 
 
 class BasePreProcess:
-    product_transaction_cnt: pd.DataFrame | dict[str, float] = {}
-    product_user_cnt: pd.DataFrame | dict[str, float] = {}
-    user_transaction_cnt: pd.DataFrame | dict[str, float] = {}
-    user_product_cnt: pd.DataFrame | dict[str, float] = {}
+    """base preprocess that has generic attributes for Preprocess and FeatureEng classes
+    product_transaction_cnt:
+        number of transaction per product
+            key : product ID
+            value float -> number of transaction per product
+    product_user_cnt:
+        number of unique users per product that has transacted with product
+            key: product ID
+            value: int number of unique users per product
+    user_transaction_cnt:
+        number of transactions per user
+            key: user ID
+            value: # of transactions per user
+    user_product_cnt:
+        number unique products per user
+            key: user ID
+            value: int number of unique products
+    """
+    product_transaction_cnt: dict[str, float] = {}
+    product_user_cnt: dict[str, float] = {}
+    user_transaction_cnt: dict[str, float] = {}
+    user_product_cnt: dict[str, float] = {}
     null_values: [dict | float] = {}
     numerical_mapping: dict[
         str,
@@ -255,7 +284,7 @@ class PreProcess(ReadData, BasePreProcess):
     def get_product_transaction_cnt(self):
         """
         """
-        self.product_transaction_cnt = (
+        _product_transaction_cnt = (
             self.train_data.groupby(self.product_field_name)
             .agg({self.transaction_field_name: "count"})
             .reset_index()
@@ -263,19 +292,19 @@ class PreProcess(ReadData, BasePreProcess):
             .sort_values('p_trans_cnt', ascending=False)
         )
 
-        self.product_transaction_cnt['p_trans_cnt_norm'] = self.min_max_norm(
-            self.product_transaction_cnt['p_trans_cnt']
+        _product_transaction_cnt['p_trans_cnt_norm'] = self.min_max_norm(
+            _product_transaction_cnt['p_trans_cnt']
         )
 
         self.product_transaction_cnt = (
-            self.product_transaction_cnt.set_index(self.product_field_name)
+            _product_transaction_cnt.set_index(self.product_field_name)
             .to_dict()
         )
 
     def get_product_user_cnt(self):
         """
         """
-        self.product_user_cnt = (
+        _product_user_cnt = (
             self.train_data
             .groupby(self.product_field_name)
             .agg({self.user_field_name: pd.Series.nunique})
@@ -284,17 +313,17 @@ class PreProcess(ReadData, BasePreProcess):
             .sort_values('p_user_cnt', ascending=False)
         )
 
-        self.product_user_cnt['p_user_cnt_norm'] = self.min_max_norm(
+        _product_user_cnt['p_user_cnt_norm'] = self.min_max_norm(
             self.product_user_cnt['p_user_cnt']
         )
 
         self.product_user_cnt = (
-            self.product_user_cnt.set_index(self.product_field_name)
+            _product_user_cnt.set_index(self.product_field_name)
             .to_dict()
         )
 
     def get_user_transaction_cnt(self):
-        self.user_transaction_cnt = (
+        _user_transaction_cnt = (
             self.train_data
             .groupby(self.user_field_name)
 
@@ -303,17 +332,17 @@ class PreProcess(ReadData, BasePreProcess):
             .rename(columns={self.transaction_field_name: "u_transaction_cnt"})
         )
 
-        self.user_transaction_cnt['u_transaction_cnt_norm'] = self.min_max_norm(
-            self.product_transaction_cnt['u_transaction_cnt']
+        _user_transaction_cnt['u_transaction_cnt_norm'] = self.min_max_norm(
+            _user_transaction_cnt['u_transaction_cnt']
         )
 
         self.user_transaction_cnt = (
-            self.user_transaction_cnt.set_index(self.user_field_name)
+            _user_transaction_cnt.set_index(self.user_field_name)
             .to_dict()
         )
 
     def user_product_cnt(self):
-        self.user_product_cnt = (
+        _user_product_cnt = (
             self.train_data
             .groupby(self.user_field_name)
             .agg({self.product_field_name: pd.Series.nunique})
@@ -321,12 +350,12 @@ class PreProcess(ReadData, BasePreProcess):
             .rename(columns={self.product_field_name: "u_product_cnt"})
         )
 
-        self.user_product_cnt['u_product_cnt_norm'] = self.min_max_norm(
-            self.user_product_cnt['u_product_cnt']
+        _user_product_cnt['u_product_cnt_norm'] = self.min_max_norm(
+            _user_product_cnt['u_product_cnt']
         )
 
         self.user_product_cnt = (
-            self.user_product_cnt.set_index(self.user_field_name)
+            _user_product_cnt.set_index(self.user_field_name)
             .to_dict()
         )
 
