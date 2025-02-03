@@ -6,9 +6,36 @@ from transformer_based_recommendation.utils import Payload
 
 
 class Data:
+    """datasets for recommendation
+    product_data:
+        only supports pandas dataframe.
+        product ID column must be in the dataset.
+        unique products per row.
+        product related columns. e.g. product category product name, product value.
+    user_data:
+        only supports pandas dataframe
+        user Id column must be in the dataset.
+        unique users per row.
+        user related columns. e.g. age, gender.
+    train_data:
+        only supports pandas dataframe.
+        transaction ID, user ID, product ID columns must be in the dataset.
+        timestamp column must be in the dataset.
+        unique (transaction ID, timestamp). e.g rows of train_data;
+            | transaction ID| user_Id | product ID|  quantity  |  product_value | transaction value |
+            |---------------|---------|-----------|------------|----------------|-------------------|
+            |   order_1     |  u_1    |   p_1     | 1          |    10          |     40            |
+            |   order_1     |  u_1    |   p_2     | 2          |    5           |     40            |
+            |   order_1     |  u_1    |   p_3     | 1          |    20          |     40            |
+            |   order_2     |  u_2    |   p_5     | 1          |    10          |     30            |
+            |   order_2     |  u_2    |   p_6     | 2          |    5           |     30            |
+            |   order_2     |  u_2    |   p_7     | 5          |    2           |     30            |
+
+
+        data paths will be given from configs/params.yaml
+    """
     product_data: pd.DataFrame = pd.DataFrame()
     user_data: pd.DataFrame = pd.DataFrame()
-    transaction_data: pd.DataFrame = pd.DataFrame()
     train_data: pd.DataFrame = pd.DataFrame()
 
 
@@ -41,13 +68,13 @@ class ReadData(Data):
                 """
             )
 
-        if  'transaction_data' not in self.dataset_file_names.keys():
+        if  'train_data' not in self.dataset_file_names.keys():
             raise RuntimeError(
                 """
-                transaction_datas are missing. 
-                In order to run framework transaction_datas dataset is needed.
-                please add to dataset_file_names to transaction_data.
-                You can only add 4 different transaction_data datasets. 
+                train_data are missing. 
+                In order to run framework train_datas dataset is needed.
+                please add to dataset_file_names to train_data.
+                You can only add 4 different train_data datasets. 
                 """
             )
 
@@ -171,26 +198,26 @@ class PreProcess(ReadData, BasePreProcess):
             )
 
         if (
-                self.user_field_name not in list(self.transaction_data.columns)
-                or self.product_field_name not in list(self.transaction_data.columns)
-                or self.transaction_field_name not in list(self.transaction_data.columns)
+                self.user_field_name not in list(self.train_data.columns)
+                or self.product_field_name not in list(self.train_data.columns)
+                or self.transaction_field_name not in list(self.train_data.columns)
         ):
             raise RuntimeError(
                 f"""
-                user ID or product ID columns are not transaction_data.
+                user ID or product ID columns are not train_data.
                 """
             )
 
         if len(
             set(self.categorical_features)
-            - set(self.transaction_data.columns + self.product_data.columns + self.user_data.columns)
+            - set(self.train_data.columns + self.product_data.columns + self.user_data.columns)
         ) != 0:
             raise RuntimeError(
                 f"""
                 some categorical feature column names are missing one of datasets; here are missing columns;
                     {(
                         set(self.categorical_features) 
-                        - set(self.transaction_data.columns + self.product_data.columns + self.user_data.columns)
+                        - set(self.train_data.columns + self.product_data.columns + self.user_data.columns)
                     )}   
                 """
             )
@@ -209,10 +236,8 @@ class PreProcess(ReadData, BasePreProcess):
 
     def update_categorical_features(self):
         for cat in self.categorical_features:
-            if cat in self.transaction_data.columns:
+            if cat in self.train_data.columns:
                 self.train_data[cat] = self.train_data[cat].apply(self.convert_to_str)
-            if cat in self.transaction_data.columns:
-                self.transaction_data[cat] = self.transaction_data[cat].apply(self.convert_to_str)
             if cat in self.user_data.columns:
                 self.user_data[cat] = self.user_data[cat].apply(self.convert_to_str)
             if cat in self.product_data.columns:
@@ -231,7 +256,7 @@ class PreProcess(ReadData, BasePreProcess):
         """
         """
         self.product_transaction_cnt = (
-            self.transaction_data.groupby(self.product_field_name)
+            self.train_data.groupby(self.product_field_name)
             .agg({self.transaction_field_name: "count"})
             .reset_index()
             .rename(columns={self.transaction_field_name: "p_trans_cnt"})
@@ -251,7 +276,7 @@ class PreProcess(ReadData, BasePreProcess):
         """
         """
         self.product_user_cnt = (
-            self.transaction_data
+            self.train_data
             .groupby(self.product_field_name)
             .agg({self.user_field_name: pd.Series.nunique})
             .reset_index()
@@ -270,7 +295,7 @@ class PreProcess(ReadData, BasePreProcess):
 
     def get_user_transaction_cnt(self):
         self.user_transaction_cnt = (
-            Data.transaction_data
+            self.train_data
             .groupby(self.user_field_name)
 
             .agg({self.transaction_field_name: pd.Series.nunique})
@@ -289,7 +314,7 @@ class PreProcess(ReadData, BasePreProcess):
 
     def user_product_cnt(self):
         self.user_product_cnt = (
-            self.transaction_data
+            self.train_data
             .groupby(self.user_field_name)
             .agg({self.product_field_name: pd.Series.nunique})
             .reset_index()
@@ -311,13 +336,13 @@ class PreProcess(ReadData, BasePreProcess):
             + (.4 * self.train_data['p_order_cnt_norm'])
             + (.4 * self.train_data['p_user_cnt_norm'])
         )
-        self.train_data['rating'] = self.transaction_data.relevance_scores.apply(
+        self.train_data['rating'] = self.train_data.relevance_scores.apply(
             self.get_ranking
         )
 
     def get_mapping_from_datasets(self, f) -> tuple[str | tuple, dict[str | tuple, str | float]]:
         _key = [self.product_field_name, self.user_field_name]
-        _data = self.transaction_data
+        _data = self.train_data
         if f in self.user_data.columns:
             _key = self.user_field_name
             _data = self.user_data
