@@ -462,7 +462,7 @@ class PreProcess(ReadData, BasePreProcess):
         self.train_data[[
             f"sequence_{self.product_field_name}s",
             'sequence_relevance_scores',
-            self.product_field_name,
+            f"target_{self.product_field_name}",
             'relevance_score'
         ]] = self.train_data.apply(
             lambda row:
@@ -480,7 +480,7 @@ class PreProcess(ReadData, BasePreProcess):
             self.train_data
             .sort_values([self.product_field_name, self.timestamp_field_name])
             .groupby(self.user_field_name)
-            [['sequence_relevance_score', f'sequence_{self.product_field_name}']]
+            [['sequence_relevance_scores', f'sequence_{self.product_field_name}s']]
             .agg("last")
             .reset_index()
             .set_index(self.user_field_name)
