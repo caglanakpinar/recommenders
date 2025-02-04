@@ -132,13 +132,15 @@ class BasePreProcess:
         number unique products per user
             key: user ID
             value: int number of unique products
+    user_relevance_sequence:
+
     """
     product_transaction_cnt: dict[str, float] = {}
     product_user_cnt: dict[str, float] = {}
     user_transaction_cnt: dict[str, float] = {}
     user_product_cnt: dict[str, float] = {}
     null_values: [dict | float] = {}
-    product_ratings: [dict | float] = {}
+    user_relevance_sequence: [dict | float] = {}
     numerical_mapping: dict[
         str,
         tuple[
@@ -148,6 +150,13 @@ class BasePreProcess:
 
     ] = {}
     categorical_mappings: dict[
+        str,
+        tuple[
+            str | tuple[str, str],
+            dict
+        ]
+    ] = {}
+    sequence_mapping: dict[
         str,
         tuple[
             str | tuple[str, str],
@@ -186,6 +195,27 @@ class BasePreProcess:
         if 3.5 < r:
             return 5
 
+    @staticmethod
+    def convert_to_str_sequence(seq):
+        return ",".join([str(s) for s in seq])
+
+    @staticmethod
+    def create_sequences(values, window_size, step_size):
+        sequences = []
+        start_index = 0
+        while True:
+            end_index = start_index + window_size
+            seq = values[start_index:end_index]
+            if len(seq) < window_size:
+                seq = values[-window_size:]
+                if len(seq) < window_size:
+                    seq = seq + ([seq[-1]] * (window_size - len(seq)))
+                    sequences.append(seq)
+                break
+            sequences.append(seq)
+            start_index += step_size
+        return sequences
+
 
 class PreProcess(ReadData, BasePreProcess):
     def __init__(
@@ -195,7 +225,9 @@ class PreProcess(ReadData, BasePreProcess):
             data_format: str,
             fields: dict[str, str],
             categorical_features: list[str],
-            numerical_features: list[str]
+            numerical_features: list[str],
+            sequence_length: int,
+            step_size: int
     ):
         super().__init__(
             data_path,
@@ -209,6 +241,12 @@ class PreProcess(ReadData, BasePreProcess):
         self.timestamp_field_name = fields['timestamp_field_name']
         self.categorical_features = categorical_features
         self.numerical_features = numerical_features
+        self.sequence_features = [
+            "relevance_score",
+            self.product_field_name
+        ]
+        self.sequence_length = sequence_length
+        self.step_size = step_size
 
         if  self.user_field_name not in list(self.user_data.columns):
             raise RuntimeError(
@@ -262,10 +300,13 @@ class PreProcess(ReadData, BasePreProcess):
         self.user_product_cnt()
         if fields.get('relevance') is None:
             self.create_rankings()
-        self.get_product_ratings()
 
         self.get_categorical_mappings()
         self.get_numerical_mappings()
+
+        self.train_data_creation()
+        self.get_user_relevance_sequence()
+        self.get_sequences_mapping()
 
     def update_categorical_features(self):
         for cat in self.categorical_features:
@@ -364,25 +405,84 @@ class PreProcess(ReadData, BasePreProcess):
         )
 
     def create_rankings(self):
-        self.train_data['relevance_scores'] = (
-            (.2 * self.train_data['selection_ordered'])
-            + (.4 * self.train_data['p_order_cnt_norm'])
-            + (.4 * self.train_data['p_user_cnt_norm'])
+        self.train_data['relevance_score'] = (
+                (.2 * self.train_data['selection_ordered'])
+                + (.4 * self.train_data['p_order_cnt_norm'])
+                + (.4 * self.train_data['p_user_cnt_norm'])
         )
-        self.train_data['rating'] = self.train_data.relevance_scores.apply(
+        self.train_data['rating'] = self.train_data.relevance_score.apply(
             self.get_ranking
         )
 
-    def get_product_ratings(self):
-        self.product_ratings = (
+    def train_data_creation(self):
+        train_data = (
+            self.train_data
+            .sort_values([
+                self.user_field_name,
+                self.timestamp_field_name
+            ])
+            .groupby(self.user_field_name)
+        )
+        train_data = pd.DataFrame(
+            {
+                self.user_field_name: list(train_data.groups.keys()),
+                self.product_field_name: list(train_data[self.product_field_name].apply(list)),
+                "relevance_score": list(train_data['relevance_score'].apply(list))
+            }
+        )
+        train_data[f"sequence_{self.product_field_name}s"] = train_data[self.product_field_name].apply(
+            lambda row:
+            self.create_sequences(
+                row,
+                self.sequence_length,
+                self.step_size
+            )
+        )
+        train_data[f"sequence_relevance_scores"] = train_data['relevance_score'].apply(
+            lambda row:
+            self.create_sequences(
+                row,
+                self.sequence_length,
+                self.step_size
+            )
+        )
+        self.train_data = (
+            train_data
+            [[
+                self.user_field_name,
+                f"sequence_{self.product_field_name}s",
+                "sequence_relevance_scores"
+            ]]
+            .explode([
+                f"sequence_{self.product_field_name}s",
+                "sequence_relevance_scores"
+            ])
+        )
+        self.train_data[[
+            f"sequence_{self.product_field_name}s",
+            'sequence_relevance_scores',
+            self.product_field_name,
+            'relevance_score'
+        ]] = self.train_data.apply(
+            lambda row:
+            pd.Series([
+                row[f"sequence_{self.product_field_name}s"][:-1],
+                row['sequence_relevance_scores'][:-1],
+                row[f"sequence_{self.product_field_name}s"][-1],
+                row['sequence_relevance_scores'][-1]
+            ]),
+            axis=1
+        )
+
+    def get_user_relevance_sequence(self):
+        self.user_relevance_sequence = (
             self.train_data
             .sort_values([self.product_field_name, self.timestamp_field_name])
-            .groupby(self.product_field_name)
-            ['relevance_scores']
+            .groupby(self.user_field_name)
+            [['sequence_relevance_score', f'sequence_{self.product_field_name}']]
             .agg("last")
             .reset_index()
-            .rename(columns={"relevance_scores": "sequence_ratings"})
-            .set_index(self.product_field_name)
+            .set_index(self.user_field_name)
             .to_dict()
         )
 
@@ -442,7 +542,6 @@ class PreProcess(ReadData, BasePreProcess):
             (self.product_field_name, self.product_user_cnt),
             (self.user_field_name, self.user_transaction_cnt),
             (self.user_field_name, self.user_product_cnt),
-            (self.product_field_name, self.product_ratings)
         ]:
             for f, _value in _mapping.items():
                 self.numerical_mapping[f] = (
@@ -454,6 +553,13 @@ class PreProcess(ReadData, BasePreProcess):
             if f not in self.numerical_mapping:
                 self.numerical_mapping[f] = self.get_mapping_from_datasets(f)
 
+    def get_sequences_mapping(self):
+        self.sequence_mapping = {
+            f: (self.user_field_name, m)
+            for f, m in self.user_relevance_sequence.items()
+        }
+
+
 class FeatureEng(PreProcess):
     def __init__(
             self,
@@ -461,7 +567,9 @@ class FeatureEng(PreProcess):
             dataset_file_names: dict[str, str], data_format: str,
             fields: dict[str, str],
             categorical_features: list[str],
-            numeric_features: list[str]
+            numeric_features: list[str],
+            sequence_length: int,
+            step_size: int
     ):
         super().__init__(
             data_path,
@@ -469,7 +577,9 @@ class FeatureEng(PreProcess):
             data_format,
             fields,
             categorical_features,
-            numeric_features
+            numeric_features,
+            sequence_length,
+            step_size
         )
         self.numeric_features = numeric_features
         self.create_offline_features_and_mappings()
@@ -492,7 +602,7 @@ class FeatureEng(PreProcess):
 
     def create_online_features_and_mappings(self, payload: Payload) -> dict[str, float | str]:
         features_mappings = {}
-        for mappings in [self.numerical_mapping, self.categorical_mappings]:
+        for mappings in [self.numerical_mapping, self.categorical_mappings, self.sequence_mapping]:
             for f, key_feature_map in mappings.items():
                 for key, mapping in key_feature_map:
                     mapping_key = self.convert_to_str(
