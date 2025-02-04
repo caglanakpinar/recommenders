@@ -133,7 +133,9 @@ class BasePreProcess:
             key: user ID
             value: int number of unique products
     user_relevance_sequence:
-
+        last relevance score per user
+            key: user ID
+            value: last relevance score sequence, last selected product ID sequence
     """
     product_transaction_cnt: dict[str, float] = {}
     product_user_cnt: dict[str, float] = {}
@@ -298,8 +300,7 @@ class PreProcess(ReadData, BasePreProcess):
         self.get_product_user_cnt()
         self.get_user_transaction_cnt()
         self.user_product_cnt()
-        if fields.get('relevance') is None:
-            self.create_rankings()
+        self.create_relevance()
 
         self.get_categorical_mappings()
         self.get_numerical_mappings()
@@ -404,7 +405,7 @@ class PreProcess(ReadData, BasePreProcess):
             .to_dict()
         )
 
-    def create_rankings(self):
+    def create_relevance(self):
         self.train_data['relevance_score'] = (
                 (.2 * self.train_data['selection_ordered'])
                 + (.4 * self.train_data['p_order_cnt_norm'])
