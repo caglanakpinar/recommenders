@@ -138,6 +138,7 @@ class BasePreProcess:
     user_transaction_cnt: dict[str, float] = {}
     user_product_cnt: dict[str, float] = {}
     null_values: [dict | float] = {}
+    product_ratings: [dict | float] = {}
     numerical_mapping: dict[
         str,
         tuple[
@@ -205,6 +206,7 @@ class PreProcess(ReadData, BasePreProcess):
         self.user_field_name = fields['user_field_name']
         self.transaction_field_name = fields['transaction_field_name']
         self.relevance_field = fields.get('relevance', 'relevance')
+        self.timestamp_field_name = fields['timestamp_field_name']
         self.categorical_features = categorical_features
         self.numerical_features = numerical_features
 
@@ -230,10 +232,11 @@ class PreProcess(ReadData, BasePreProcess):
                 self.user_field_name not in list(self.train_data.columns)
                 or self.product_field_name not in list(self.train_data.columns)
                 or self.transaction_field_name not in list(self.train_data.columns)
+                or self.timestamp_field_name not in list(self.train_data.columns)
         ):
             raise RuntimeError(
                 f"""
-                user ID or product ID columns are not train_data.
+                user ID or product ID or transaction ID or timestamp columns are not train_data.
                 """
             )
 
@@ -259,6 +262,7 @@ class PreProcess(ReadData, BasePreProcess):
         self.user_product_cnt()
         if fields.get('relevance') is None:
             self.create_rankings()
+        self.get_product_ratings()
 
         self.get_categorical_mappings()
         self.get_numerical_mappings()
@@ -369,6 +373,19 @@ class PreProcess(ReadData, BasePreProcess):
             self.get_ranking
         )
 
+    def get_product_ratings(self):
+        self.product_ratings = (
+            self.train_data
+            .sort_values([self.product_field_name, self.timestamp_field_name])
+            .groupby(self.product_field_name)
+            ['relevance_scores']
+            .agg("last")
+            .reset_index()
+            .rename(columns={"relevance_scores": "sequence_ratings"})
+            .set_index(self.product_field_name)
+            .to_dict()
+        )
+
     def get_mapping_from_datasets(self, f) -> tuple[str | tuple, dict[str | tuple, str | float]]:
         _key = [self.product_field_name, self.user_field_name]
         _data = self.train_data
@@ -424,19 +441,13 @@ class PreProcess(ReadData, BasePreProcess):
             (self.product_field_name, self.product_transaction_cnt),
             (self.product_field_name, self.product_user_cnt),
             (self.user_field_name, self.user_transaction_cnt),
-            (self.user_field_name, self.user_product_cnt)
+            (self.user_field_name, self.user_product_cnt),
+            (self.product_field_name, self.product_ratings)
         ]:
             for f, _value in _mapping.items():
                 self.numerical_mapping[f] = (
                     _key,
-                    (
-                        _value
-                        .groupby(_key)
-                        [f]
-                        .agg('first')
-                        .reset_index()
-                        .set_index(_key)
-                    )
+                    _mapping[f]
                 )
 
         for f, _value in self.numerical_features:
