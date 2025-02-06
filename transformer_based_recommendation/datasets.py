@@ -168,8 +168,8 @@ class BasePreProcess:
 
     @staticmethod
     def min_max_norm(data: pd.Series) -> float:
-        _min = data.p_order_cnt.min()
-        _max = data.p_order_cnt.max()
+        _min = data.min()
+        _max = data.max()
 
         return (
             (data - _min)
@@ -185,7 +185,7 @@ class BasePreProcess:
         return 'b_' + str(int(x))
 
     @staticmethod
-    def get_ranking(r):
+    def get_relevance_score(r):
         if r <= .5:
             return 1
         if .5 < r <= 1.5:
@@ -239,14 +239,9 @@ class PreProcess(ReadData, BasePreProcess):
         self.product_field_name = fields['product_field_name']
         self.user_field_name = fields['user_field_name']
         self.transaction_field_name = fields['transaction_field_name']
-        self.relevance_field = fields.get('relevance', 'relevance')
         self.timestamp_field_name = fields['timestamp_field_name']
         self.categorical_features = categorical_features
         self.numerical_features = numerical_features
-        self.sequence_features = [
-            "relevance_score",
-            self.product_field_name
-        ]
         self.sequence_length = sequence_length
         self.step_size = step_size
 
@@ -282,14 +277,22 @@ class PreProcess(ReadData, BasePreProcess):
 
         if len(
             set(self.categorical_features)
-            - set(self.train_data.columns + self.product_data.columns + self.user_data.columns)
+            - set(
+                list(self.train_data.columns)
+                + list(self.product_data.columns)
+                + list(self.user_data.columns)
+            )
         ) != 0:
             raise RuntimeError(
                 f"""
                 some categorical feature column names are missing one of datasets; here are missing columns;
                     {(
                         set(self.categorical_features) 
-                        - set(self.train_data.columns + self.product_data.columns + self.user_data.columns)
+                        - set(
+                            list(self.train_data.columns) 
+                            + list(self.product_data.columns) 
+                            + list(self.user_data.columns)
+                        )
                     )}   
                 """
             )
@@ -300,11 +303,11 @@ class PreProcess(ReadData, BasePreProcess):
         self.get_product_user_cnt()
         self.get_user_transaction_cnt()
         self.user_product_cnt()
-        self.create_relevance()
 
         self.get_categorical_mappings()
         self.get_numerical_mappings()
 
+        self.create_relevance()
         self.train_data_creation()
         self.get_user_relevance_sequence()
         self.get_sequences_mapping()
@@ -360,7 +363,7 @@ class PreProcess(ReadData, BasePreProcess):
         )
 
         _product_user_cnt['p_user_cnt_norm'] = self.min_max_norm(
-            self.product_user_cnt['p_user_cnt']
+            _product_user_cnt['p_user_cnt']
         )
 
         self.product_user_cnt = (
@@ -406,16 +409,28 @@ class PreProcess(ReadData, BasePreProcess):
         )
 
     def create_relevance(self):
+        for f, mappings in self.numerical_mapping.items():
+            for key, mapping in mappings:
+                self.train_data[f] = self.train_data[key].apply(
+                    mapping[f]
+                )
+
         self.train_data['relevance_score'] = (
                 (.2 * self.train_data['selection_ordered'])
                 + (.4 * self.train_data['p_order_cnt_norm'])
                 + (.4 * self.train_data['p_user_cnt_norm'])
         )
-        self.train_data['rating'] = self.train_data.relevance_score.apply(
-            self.get_ranking
+        self.train_data['relevance_score'] = self.train_data.relevance_score.apply(
+            self.get_relevance_score
         )
 
     def train_data_creation(self):
+        train_data = (
+            self.train_data
+            .mer
+        )
+
+
         train_data = (
             self.train_data
             .sort_values([
@@ -493,7 +508,7 @@ class PreProcess(ReadData, BasePreProcess):
         if f in self.user_data.columns:
             _key = self.user_field_name
             _data = self.user_data
-        if f in self.product_data.solumns:
+        if f in self.product_data.columns:
             _key = self.product_field_name
             _data = self.product_data
         return (
@@ -628,6 +643,46 @@ class FeatureEng(PreProcess):
         for key, mapping in self.numerical_mapping:
             for f in mapping.keys():
                 self.null_values[f] = mode(self.train_data[self.train_data[f] == self.train_data[f]][f])
+
+
+if __name__ == '__main__':
+    params = {
+        "user_id": "user_id",
+        "item_id": "product_id",
+        "sequence_length": 4,
+        "step_size": 2,
+        "num_heads": 3,
+        "hidden_layers": 2,
+        "hidden_units": 256,
+        "dropout_rate": 0.1,
+
+        "fields": {
+            "product_field_name": "product_id",
+            "user_field_name": "user_id",
+            "transaction_field_name": "order_id",
+            "timestamp_field_name": "ts"
+        },
+        "data_path": "/Volumes/PS2000W/instacart-market-basket-analysis/",
+        "data_format": "csv",
+        "dataset_file_names":
+            {
+                "product_data": "products",
+                "user_data": "orders",
+                "train_data": "train_data"
+            }
+    }
+    FeatureEng(
+        data_path=params.get('data_path'),
+        dataset_file_names=params.get('dataset_file_names'),
+        data_format=params.get('data_format'),
+        fields=params.get('fields'),
+        categorical_features=['user_id', 'department_id', 'aisle_id', 'product_id'],
+        numeric_features=[],
+        sequence_length=params.get('sequence_length'),
+        step_size=params.get('step_size')
+    )
+
+
 
 
 
