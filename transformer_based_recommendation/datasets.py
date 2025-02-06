@@ -427,12 +427,6 @@ class PreProcess(ReadData, BasePreProcess):
     def train_data_creation(self):
         train_data = (
             self.train_data
-            .mer
-        )
-
-
-        train_data = (
-            self.train_data
             .sort_values([
                 self.user_field_name,
                 self.timestamp_field_name
