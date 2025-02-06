@@ -411,7 +411,7 @@ class PreProcess(ReadData, BasePreProcess):
     def create_relevance(self):
         for f, mappings in self.numerical_mapping.items():
             for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].apply(
+                self.train_data[f] = self.train_data[key].map(
                     mapping[f]
                 )
 
@@ -600,13 +600,13 @@ class FeatureEng(PreProcess):
         """
         for f, mappings in self.numerical_mapping.items():
             for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].apply(
+                self.train_data[f] = self.train_data[key].map(
                     mapping[f]
                 )
 
         for f, mappings in self.categorical_mappings.items():
             for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].apply(
+                self.train_data[f] = self.train_data[key].map(
                     mapping[f]
                 )
 
