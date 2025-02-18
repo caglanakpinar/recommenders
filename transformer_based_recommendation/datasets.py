@@ -1,6 +1,7 @@
 from pathlib import Path
 import pandas as pd
 from statistics import mode
+from mlp import Params
 
 from transformer_based_recommendation.utils import Payload
 
@@ -297,20 +298,12 @@ class PreProcess(ReadData, BasePreProcess):
                 """
             )
 
-        self.get_selection_ordered()
-        self.update_categorical_features()
-        self.get_product_transaction_cnt()
-        self.get_product_user_cnt()
-        self.get_user_transaction_cnt()
-        self.user_product_cnt()
-
-        self.get_categorical_mappings()
-        self.get_numerical_mappings()
-
-        self.create_relevance()
-        self.train_data_creation()
-        self.get_user_relevance_sequence()
-        self.get_sequences_mapping()
+    def train_product_user_data_merge(self) -> pd.DataFrame:
+        data = self.train_data
+        for field_name, data_set in [(self.user_field_name, self.user_data), (self.product_field_name, self.product_data)]:
+            columns = list((set(data.columns) & set(data_set.columns)) - set([field_name]))
+            data = data.drop(columns, axis=1).merge(data_set, on=field_name, how='left')
+        return data
 
     def update_categorical_features(self):
         for cat in self.categorical_features:
@@ -410,15 +403,15 @@ class PreProcess(ReadData, BasePreProcess):
 
     def create_relevance(self):
         for f, mappings in self.numerical_mapping.items():
-            for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].map(
-                    mapping[f]
-                )
+            key, mapping = mappings
+            self.train_data[f] = self.train_data[key].map(
+                mapping.get(f, mapping)
+            )
 
         self.train_data['relevance_score'] = (
-                (.2 * self.train_data['selection_ordered'])
-                + (.4 * self.train_data['p_order_cnt_norm'])
-                + (.4 * self.train_data['p_user_cnt_norm'])
+            (.2 * self.train_data['selection_ordered'])
+            + (.4 * self.train_data['p_trans_cnt_norm'])
+            + (.4 * self.train_data['p_user_cnt_norm'])
         )
         self.train_data['relevance_score'] = self.train_data.relevance_score.apply(
             self.get_relevance_score
@@ -487,7 +480,10 @@ class PreProcess(ReadData, BasePreProcess):
     def get_user_relevance_sequence(self):
         self.user_relevance_sequence = (
             self.train_data
-            .sort_values([self.product_field_name, self.timestamp_field_name])
+            .sort_values([
+                f"target_{self.product_field_name}",
+                self.timestamp_field_name
+            ])
             .groupby(self.user_field_name)
             [['sequence_relevance_scores', f'sequence_{self.product_field_name}s']]
             .agg("last")
@@ -514,6 +510,8 @@ class PreProcess(ReadData, BasePreProcess):
                 .agg('first')
                 .reset_index()
                 .set_index(_key)
+                .to_dict()
+                [f]
             )
         )
 
@@ -591,6 +589,20 @@ class FeatureEng(PreProcess):
             sequence_length,
             step_size
         )
+        self.get_selection_ordered()
+        self.update_categorical_features()
+        self.get_product_transaction_cnt()
+        self.get_product_user_cnt()
+        self.get_user_transaction_cnt()
+        self.user_product_cnt()
+
+        self.get_categorical_mappings()
+        self.get_numerical_mappings()
+
+        self.create_relevance()
+        self.train_data_creation()
+        self.get_sequences_mapping()
+
         self.numeric_features = numeric_features
         self.create_offline_features_and_mappings()
         self.get_null_values()
@@ -599,16 +611,20 @@ class FeatureEng(PreProcess):
         """training data set creation
         """
         for f, mappings in self.numerical_mapping.items():
-            for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].map(
-                    mapping[f]
-                )
+            key, mapping = mappings
+            if key not in self.train_data.columns:
+                key = f"target_{key}"
+            self.train_data[f] = self.train_data[key].map(
+                mapping
+            )
 
         for f, mappings in self.categorical_mappings.items():
-            for key, mapping in mappings:
-                self.train_data[f] = self.train_data[key].map(
-                    mapping[f]
-                )
+            key, mapping = mappings
+            if key not in self.train_data.columns:
+                key = f"target_{key}"
+            self.train_data[f] = self.train_data[key].map(
+                mapping
+            )
 
     def create_online_features_and_mappings(self, payload: Payload) -> dict[str, float | str]:
         features_mappings = {}
@@ -634,51 +650,19 @@ class FeatureEng(PreProcess):
         when numerical features are not available on numeric_mappings, collect from null_values
         :return:
         """
-        for key, mapping in self.numerical_mapping:
-            for f in mapping.keys():
-                self.null_values[f] = mode(self.train_data[self.train_data[f] == self.train_data[f]][f])
+        for f, mappings in self.categorical_mappings.items():
+            self.null_values[f] = mode(self.train_data[self.train_data[f] == self.train_data[f]][f])
 
-
-if __name__ == '__main__':
-    params = {
-        "user_id": "user_id",
-        "item_id": "product_id",
-        "sequence_length": 4,
-        "step_size": 2,
-        "num_heads": 3,
-        "hidden_layers": 2,
-        "hidden_units": 256,
-        "dropout_rate": 0.1,
-
-        "fields": {
-            "product_field_name": "product_id",
-            "user_field_name": "user_id",
-            "transaction_field_name": "order_id",
-            "timestamp_field_name": "ts"
-        },
-        "data_path": "/Volumes/PS2000W/instacart-market-basket-analysis/",
-        "data_format": "csv",
-        "dataset_file_names":
-            {
-                "product_data": "products",
-                "user_data": "orders",
-                "train_data": "train_data"
-            }
-    }
-    FeatureEng(
-        data_path=params.get('data_path'),
-        dataset_file_names=params.get('dataset_file_names'),
-        data_format=params.get('data_format'),
-        fields=params.get('fields'),
-        categorical_features=['user_id', 'department_id', 'aisle_id', 'product_id'],
-        numeric_features=[],
-        sequence_length=params.get('sequence_length'),
-        step_size=params.get('step_size')
-    )
-
-
-
-
-
-
-
+    @classmethod
+    def generate(cls, params: Params):
+        _cls = FeatureEng(
+            data_path=params.get('data_path'),
+            dataset_file_names=params.get('dataset_file_names'),
+            data_format=params.get('data_format'),
+            fields=params.get('fields'),
+            categorical_features=params.get('categorical_features'),
+            numeric_features=params.get('numeric_features'),
+            sequence_length=params.get('sequence_length'),
+            step_size=params.get('step_size')
+        )
+        return _cls
